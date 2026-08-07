@@ -1,0 +1,17 @@
+version: '3.9'
+
+services:
+  image-api:
+    build: .
+    container_name: image-api
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - image_data:/data/images
+
+    restart: unless-stopped
+
+volumes:
+  image_data:
