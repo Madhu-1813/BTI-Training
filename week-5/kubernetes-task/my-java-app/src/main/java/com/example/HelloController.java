@@ -9,6 +9,6 @@ public class HelloController {
 
     @GetMapping("/")
     public String hello() {
-        return "Hello from Spring Boot Kubernetes!";
+        return "Hello Welcome to BTI";
     }
 }
