@@ -1,0 +1,117 @@
+name: Deploy Publish Image
+
+on:
+  workflow_run:
+    workflows:
+      - "Build Java CRUD application"
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Display triggering workflow information
+        run: |
+          echo "Workflow name: ${{ github.event.workflow_run.name }}"
+          echo "Run ID:        ${{ github.event.workflow_run.id }}"
+          echo "Commit SHA:    ${{ github.event.workflow_run.head_sha }}"
+          echo "Tag or branch: ${{ github.event.workflow_run.head_branch }}"
+          echo "Conclusion:    ${{ github.event.workflow_run.conclusion }}"
+
+      - name: Checkout tagged source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download JAR from build workflow
+        uses: actions/download-artifact@v5
+        with:
+          name: spring-boot-jar
+          path: target
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify downloaded JAR
+        shell: bash
+        run: |
+          echo "Downloaded files:"
+          find target -maxdepth 2 -type f -print
+
+          JAR_FILE=$(find target \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            ! -name "original-*.jar" \
+            ! -name "*-sources.jar" \
+            ! -name "*-javadoc.jar" \
+            | head -n 1)
+
+          if [ -z "$JAR_FILE" ]; then
+            echo "No deployable JAR file was found"
+            exit 1
+          fi
+
+          echo "JAR file found: $JAR_FILE"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Docker image metadata
+        id: metadata
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.event.workflow_run.head_branch }}"
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" \
+            | tr '[:upper:]' '[:lower:]')
+
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "owner_lower=$OWNER_LOWER" >> "$GITHUB_OUTPUT"
+
+          echo "Docker tag: $TAG_NAME"
+          echo "GHCR owner: $OWNER_LOWER"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag "jpalaparthi/sp-crud-demo:${{ steps.metadata.outputs.tag_name }}" \
+            --tag "jpalaparthi/sp-crud-demo:latest" \
+            --tag "ghcr.io/${{ steps.metadata.outputs.owner_lower }}/sp-crud-demo:${{ steps.metadata.outputs.tag_name }}" \
+            --tag "ghcr.io/${{ steps.metadata.outputs.owner_lower }}/sp-crud-demo:latest" \
+            .
+
+      - name: Push images to Docker Hub
+        run: |
+          docker push \
+            "jpalaparthi/sp-crud-demo:${{ steps.metadata.outputs.tag_name }}"
+
+          docker push \
+            "jpalaparthi/sp-crud-demo:latest"
+
+      - name: Push images to GHCR
+        run: |
+          docker push \
+            "ghcr.io/${{ steps.metadata.outputs.owner_lower }}/sp-crud-demo:${{ steps.metadata.outputs.tag_name }}"
+
+          docker push \
+            "ghcr.io/${{ steps.metadata.outputs.owner_lower }}/sp-crud-demo:latest"

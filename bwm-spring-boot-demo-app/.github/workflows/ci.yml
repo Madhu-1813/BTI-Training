@@ -1,0 +1,84 @@
+name: Build Java CRUD application
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, Test and Analyze
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: "maven"
+
+      - name: Build, test and generate coverage
+        run: |
+          mvn --batch-mode clean verify
+
+      - name: Verify JaCoCo coverage report
+        shell: bash
+        run: |
+          REPORT_FILE="target/site/jacoco/jacoco.xml"
+
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "JaCoCo XML report was not generated"
+            exit 1
+          fi
+
+          echo "JaCoCo report generated successfully:"
+          ls -lh "$REPORT_FILE"
+
+      - name: Run SonarQube Cloud analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn --batch-mode \
+            org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.qualitygate.wait=true
+
+      - name: Display generated JAR files
+        run: |
+          echo "Generated JAR files:"
+
+          find target \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            -print
+
+      - name: Upload application JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: spring-boot-jar
+
+          path: |
+            target/*.jar
+            !target/original-*.jar
+            !target/*-sources.jar
+            !target/*-javadoc.jar
+
+          if-no-files-found: error
+          retention-days: 30
